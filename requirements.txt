@@ -1,0 +1,7 @@
+pywebio
+fastapi
+uvicorn
+amazon-braket-sdk
+boto3
+Pillow
+pytest
