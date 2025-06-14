@@ -1,11 +1,11 @@
 # main.py
 
+import os
 from pywebio import start_server
 from pywebio.output import put_text, put_buttons, put_code, put_html, clear
 import run_counter
 import update_counter
-from utils.executor import execute_code
-import os
+from utils.qpu_runner import submit_to_ionq
 
 # Load metadata for all 25 blocks at startup
 BLOCKS = []
@@ -16,22 +16,18 @@ for block_id in [
     "block16", "block17", "block18", "block19", "block20",
     "block21", "block22", "block23", "block24", "block25",
 ]:
-    # Read Python code
     code_path = os.path.join("blocks", f"{block_id}.py")
     with open(code_path, "r") as f:
         code_content = f.read()
 
-    # Read description (Markdown)
     desc_path = os.path.join("descriptions", f"{block_id}.md")
     with open(desc_path, "r") as f:
         desc_content = f.read()
 
-    # Read LaTeX formula
     formula_path = os.path.join("formulas", f"{block_id}.tex")
     with open(formula_path, "r") as f:
         formula_content = f.read()
 
-    # Assign a human-readable title based on block_id
     title = {
         "block01": "Hadamard Superposition",
         "block02": "Bell State",
@@ -70,15 +66,9 @@ for block_id in [
 
 
 def main():
-    """
-    Main entry point for QubitQuest tutorial.
-    Displays a list of available code blocks for the user to select.
-    """
     clear()
     put_text("# QubitQuest Tutorial")
     put_text("Select a code block to explore:")
-
-    # Render a button for each block in BLOCKS
     for blk in BLOCKS:
         put_buttons(
             [blk["title"]],
@@ -87,56 +77,53 @@ def main():
 
 
 def display_block(block):
-    """
-    Displays the selected block’s code, description, formula,
-    and provides options to run locally or go back.
-    """
     clear()
-    # Block title
     put_text(f"## {block['title']}\n")
-
-    # Description (rendered as plain text)
     put_text(block["description"])
-
-    # Mathematical formula rendered with MathJax
-    put_html(
-        f"<p><b>Mathematical Representation:</b><br>\\[{block['formula']}\\]</p>"
-    )
-
-    # Show the Python code for this block
+    put_html(f"<p><b>Mathematical Representation:</b><br>\\[{block['formula']}\\]</p>")
     put_code(block["code"], language="python")
 
-    # Buttons: Run Locally or Back to List
     put_buttons(
-        ["Run Locally", "Back to List"],
+        ["Run on IonQ QPU", "Back to List"],
         onclick=[
-            lambda b=block: run_locally(b),
+            lambda b=block: run_on_qpu(b),
             lambda: main()
         ]
     )
 
 
-def run_locally(block):
-    """
-    Executes the block’s Python code locally using executor.execute_code(),
-    displays the output, and updates the run counter.
-    """
+def run_on_qpu(block):
     clear()
-    put_text(f"### Running {block['title']} Locally...\n")
+    put_text(f"### Running {block['title']} on IonQ QPU with 10 shots…\n")
 
-    # Execute the user’s code and capture output
-    result = execute_code(block["code"])
+    # Execute block code in a shared namespace so imports stick
+    namespace = {}
+    exec(block["code"], namespace, namespace)
 
-    # Display the execution result
-    put_text("**Output:**")
-    put_text(result)
+    build = namespace.get("build")
+    if not callable(build):
+        put_text("Error: build() function not found in block code.")
+        put_buttons(["Back to List"], onclick=[lambda: main()])
+        return
 
-    # Increment and show the run count
+    circuit = build()
+
+    try:
+        # Reduced from 100 to 10 shots
+        counts = submit_to_ionq(circuit, shots=10)
+    except Exception as e:
+        put_text(f"Error during QPU submission: {e}")
+        put_buttons(["Back to List"], onclick=[lambda: main()])
+        return
+
+    put_text("**Results (bitstring → counts):**")
+    for bitstr, cnt in counts.items():
+        put_text(f"{bitstr}: {cnt}")
+
     update_counter.increment_run(block["id"])
-    count = run_counter.run_counts.get(block["id"], 0)
-    put_text(f"\n**Run count for '{block['title']}':** {count}\n")
+    total = run_counter.run_counts.get(block["id"], 0)
+    put_text(f"\n**Total runs for '{block['title']}':** {total}\n")
 
-    # Offer a “Back to List” button after execution
     put_buttons(
         ["Back to List"],
         onclick=[lambda: main()]
@@ -144,6 +131,5 @@ def run_locally(block):
 
 
 if __name__ == "__main__":
-    # Start the PyWebIO server on port 8080 with MathJax enabled via CDN
     start_server(main, port=8080, cdn=True)
 
